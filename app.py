@@ -160,10 +160,18 @@ if uploaded_file:
     # --- Веса модели---
     st.subheader("📊 Результаты")
 
-    coefs_df = pd.DataFrame({
-        'Признак': test_sample.columns,
-        'Вес': np.abs(model.named_steps["reg"].regressor_.coef_)
-    }).sort_values('Вес', ascending = False)
+    tabular = model.named_steps["tabular"]
+        feature_names = tabular.get_feature_names_out()
+
+        
+        final_reg = model.named_steps["reg"]
+        coefs = final_reg.regressor_.coef_
+
+        # cобираем табличку
+        coefs_df = pd.DataFrame({
+            'Признак': feature_names,
+            'Вес': np.abs(coefs)
+        }).sort_values('Вес', ascending=False)
 
     st.subheader("Веса модели:")
     st.dataframe(coefs_df.head(20), use_container_width=True)
