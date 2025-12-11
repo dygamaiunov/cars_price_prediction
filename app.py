@@ -14,6 +14,76 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 
 
+
+def torque_power_extraction(df):
+    # регулярки написаны с помощью ChatGPT
+    # извлекаем значение torque (крутящий момент) и нормализуем, т.к. есть записи в европейском стандарте (Nm) и в азиатском (kgm). Приводим к европейскому умножением на 9.8
+
+    # регулярка извлекает числовое значение перед kgm
+    df['asian_torque'] = df['torque'].str.extract(r'(?i)(?=.*\bkgm?\b)\b(150(?:\.0+)?|[0-9]?[0-9](?:\.\d+)?|1[0-4][0-9](?:\.\d+)?)\b', expand = False).astype(float)*9.8
+
+    # регулярка извлекает числовое значение перед Nm
+    df['european_torque'] = df['torque'].str.extract(r'(?i)(\d+(?:\.\d+)?)\s*Nm(?:\s*@|\s+at)\s*', expand = False).astype(float)
+    df['torque_normalized'] = df['european_torque'].fillna(df['asian_torque'])
+
+    # извлекаем rpm (количество оборотов в минуту, на которых достигается указанный torque)
+    # важно, что если указано одно значение rpm вместо диапазона, то оно уйдёт в max_rpm
+    df['rpm'] = df['torque'].str.extract(r'(\d{1,4}(?:[.,]\d{1,3})?(?:\s*[-–]\s*\d{1,4}(?:[.,]\d{1,3})?)?)(?=[^\d]*rpm)')
+    out = df['rpm'].str.replace(',', '').str.extract(r'(?P<min>\d[\d,]*)(?:-(?P<max>\d[\d,]*))?').replace(',', '')
+
+    out['max'] = out['max'].fillna(out['min'])
+    df['max_rpm'] = out['max']
+    df['max_rpm'] = pd.to_numeric(df['max_rpm'], errors='coerce')
+
+    # финально считаем максимальную  мощность двигателя по формуле P (Вт) = Torque * RPM * 0.10472
+    df['torque_power'] = df['torque_normalized'] * df['max_rpm'] * 0.10472
+
+    df.drop(['european_torque', 'asian_torque', 'torque', 'rpm', 'torque_normalized', 'max_rpm'], axis = 1, inplace = True)
+
+    return df
+
+
+def columns_preprocessing(df):
+    df['mileage'] = df['mileage'].str.extract(r'(?i)(\d+(?:\.\d+)?)\s*kmpl', expand=False).astype(float)
+    df['engine'] = df['engine'].str.extract(r'(?i)(\d+(?:\.\d+)?)\s*CC', expand=False).astype(float)
+    df['max_power'] = df['max_power'].str.extract(r'(?i)(\d+(?:\.\d+)?)\s*bhp', expand=False).astype(float)
+
+    return df
+
+
+def name_preprocessing(df):
+    # регулярки написаны с помощью ChatGPT
+    # достаём bs_emission из любой позиции строки
+    bs_pattern = r'(BS[ -]?(?:VI|IV|V|I{1,3}|[1-6]))'
+    df['bs_emission'] = df['name'].str.extract(bs_pattern, expand=False).str.replace(' ', '').fillna('not stated')
+
+    # убираем bs_emission из name, чтобы не мешался при разборе
+    name_clean = (
+        df['name']
+        .str.replace(bs_pattern, '', regex=True)   # вырезаем "BS IV" и т.п.
+        .str.replace(r'\s+', ' ', regex=True)      # схлопываем лишние пробелы
+        .str.strip()
+    )
+
+    # регулярка для извлечения brand, model (модель машины), variant (вариант модели)
+    pattern = r'''^(?P<brand>[A-Za-z]+)\s+(?P<model>[A-Za-z0-9]+(?:\s+[A-Za-z0-9]{1,2})?)(?:\s+(?P<variant>.*))?$'''
+
+    # применяем к очищенному name и добавляем в df
+    cols = name_clean.str.extract(pattern)
+    df = pd.concat([df, cols], axis=1)
+    df.drop(columns = ['name'], inplace = True)
+
+    return df
+
+
+def type_casting(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df['engine'] = pd.to_numeric(df['engine'], errors='coerce').astype('Int64')
+    df['seats']  = pd.to_numeric(df['seats'], errors='coerce').astype('Int64')
+    return df
+
+
+
 @st.cache_resource  # Кэшируем модель (загружается только один раз)
 def load_model():
     with open('improved_ridge_regression_pipeline.pkl', 'rb') as f:
